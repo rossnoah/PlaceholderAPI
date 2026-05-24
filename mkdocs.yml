@@ -148,4 +148,4 @@ markdown_extensions:
   - pymdownx.tasklist
 
 hooks:
-  - build_meta.py
+  - poc.py
